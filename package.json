@@ -11,7 +11,7 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
-    "lint": "node --check src/server.js && node --check src/config/database.js && node --check src/config/redis.js && node --check src/routes/auth.js && node --check src/routes/game.js && node --check src/routes/invite.js && node --check src/routes/replay.js && node --check src/middleware/idempotency.js && node --check src/middleware/errorHandler.js && node --check src/scripts/initDatabase.js && node --check src/services/gameService.js && node --check src/services/signatureService.js && node --check src/services/store.js && node --check src/services/jsonStore.js && node --check src/services/postgresStore.js && node --check src/utils/errors.js && node --check src/utils/asyncHandler.js"
+    "lint": "node --check src/server.js && node --check src/config/database.js && node --check src/config/redis.js && node --check src/routes/auth.js && node --check src/routes/game.js && node --check src/routes/invite.js && node --check src/routes/replay.js && node --check src/middleware/concurrencyLimit.js && node --check src/middleware/idempotency.js && node --check src/middleware/errorHandler.js && node --check src/scripts/initDatabase.js && node --check src/services/gameService.js && node --check src/services/signatureService.js && node --check src/services/store.js && node --check src/services/jsonStore.js && node --check src/services/postgresStore.js && node --check src/utils/errors.js && node --check src/utils/asyncHandler.js"
   },
   "keywords": [
     "snakiox",

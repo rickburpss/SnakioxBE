@@ -1,5 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
+import { env } from "../config/env.js";
+import { concurrencyLimit } from "../middleware/concurrencyLimit.js";
 import {
   completeGame,
   generateRandomResult,
@@ -8,26 +10,39 @@ import {
   getLockedResults,
   recordMint,
   serializeSessionResult,
-  startGame
+  startGame,
 } from "../services/gameService.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { normalizeWallet } from "../services/signatureService.js";
 
 const router = Router();
 
+const startGameGate = concurrencyLimit({
+  maxConcurrent:
+    env.storageDriver === "postgres"
+      ? Math.max(1, Math.min(env.databasePoolMax - 5, 25))
+      : 25,
+  maxQueue: 500,
+  acquireTimeoutMs: Math.min(
+    10000,
+    Math.max(env.requestTimeoutMs - 5000, 1000),
+  ),
+  message: "Game start is busy, please retry",
+});
+
 const cellSchema = z.object({
   x: z.number().int(),
-  y: z.number().int()
+  y: z.number().int(),
 });
 
 const moveSchema = z.object({
   direction: z.enum(["UP", "DOWN", "LEFT", "RIGHT"]),
   tick: z.number().int().nonnegative().optional(),
-  atMs: z.number().int().nonnegative().optional()
+  atMs: z.number().int().nonnegative().optional(),
 });
 
 const startSchema = z.object({
-  wallet: z.string().min(1)
+  wallet: z.string().min(1),
 });
 
 const completeSchema = z.object({
@@ -37,14 +52,14 @@ const completeSchema = z.object({
   snakeLength: z.number().int().positive(),
   finalSnakeCells: z.array(cellSchema).min(1),
   moves: z.array(moveSchema).min(1),
-  deathReason: z.enum(["wall", "self", "timeout", "manual"])
+  deathReason: z.enum(["wall", "self", "timeout", "manual"]),
 });
 
 const mintRecordSchema = z.object({
   wallet: z.string().min(1),
   sessionId: z.string().min(1),
   tokenId: z.union([z.string().min(1), z.number().int().nonnegative()]),
-  txHash: z.string().min(1)
+  txHash: z.string().min(1),
 });
 
 router.get(
@@ -52,11 +67,12 @@ router.get(
   asyncHandler(async (req, res) => {
     const status = await getGameStatus(req.params.wallet);
     res.json(status);
-  })
+  }),
 );
 
 router.post(
   "/start",
+  startGameGate,
   asyncHandler(async (req, res) => {
     const input = startSchema.parse(req.body);
     const session = await startGame(input.wallet);
@@ -66,9 +82,9 @@ router.post(
       sessionId: session.id,
       wallet: session.walletAddress,
       status: session.status,
-      startedAt: session.startedAt
+      startedAt: session.startedAt,
     });
-  })
+  }),
 );
 
 router.post(
@@ -89,11 +105,11 @@ router.post(
         finalSnakeCells: session.finalSnakeCells,
         moves: session.moves,
         deathReason: session.deathReason,
-        endedAt: session.endedAt
+        endedAt: session.endedAt,
       },
-      mint: result.mint
+      mint: result.mint,
     });
-  })
+  }),
 );
 
 router.post(
@@ -113,34 +129,38 @@ router.post(
         score: session.score,
         snakeLength: session.snakeLength,
         random: true,
-        endedAt: session.endedAt
+        endedAt: session.endedAt,
       },
-      mint: result.mint
+      mint: result.mint,
     });
-  })
+  }),
 );
 
 router.get(
   "/results/:wallet",
   asyncHandler(async (req, res) => {
     const walletAddress = normalizeWallet(req.params.wallet);
-    const sessions = (await getLockedResults(walletAddress)).map(serializeSessionResult);
+    const sessions = (await getLockedResults(walletAddress)).map(
+      serializeSessionResult,
+    );
 
     res.json({
       wallet: walletAddress,
-      sessions: sessions.map(serializeResultResponse)
+      sessions: sessions.map(serializeResultResponse),
     });
-  })
+  }),
 );
 
 router.get(
   "/result/:wallet",
   asyncHandler(async (req, res) => {
     const walletAddress = normalizeWallet(req.params.wallet);
-    const session = serializeSessionResult(await getLockedResult(walletAddress));
+    const session = serializeSessionResult(
+      await getLockedResult(walletAddress),
+    );
 
     res.json(serializeResultResponse(session, walletAddress));
-  })
+  }),
 );
 
 router.post(
@@ -149,16 +169,19 @@ router.post(
     const input = mintRecordSchema.parse(req.body);
     const mintRecord = await recordMint({
       ...input,
-      tokenId: String(input.tokenId)
+      tokenId: String(input.tokenId),
     });
 
     res.status(201).json({ mintRecord });
-  })
+  }),
 );
 
 export default router;
 
-function serializeResultResponse(session, walletAddress = session.walletAddress) {
+function serializeResultResponse(
+  session,
+  walletAddress = session.walletAddress,
+) {
   return {
     wallet: walletAddress,
     sessionId: session.id,
@@ -176,6 +199,6 @@ function serializeResultResponse(session, walletAddress = session.walletAddress)
     revealBlock: session.revealBlock,
     random: Boolean(session.random),
     mintedTokenId: session.mintedTokenId,
-    txHash: session.txHash
+    txHash: session.txHash,
   };
 }

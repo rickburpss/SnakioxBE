@@ -4,7 +4,7 @@ import { pickRevealBlock } from "./chainService.js";
 import {
   buildMintPayload,
   normalizeWallet,
-  signMintPayload
+  signMintPayload,
 } from "./signatureService.js";
 import {
   createMintRecord,
@@ -15,7 +15,8 @@ import {
   findUser,
   getSettings,
   isWalletAllowlisted,
-  updateSession
+  prepareGameStart,
+  updateSession,
 } from "./store.js";
 import { badRequest, conflict, forbidden, notFound } from "../utils/errors.js";
 
@@ -31,7 +32,7 @@ export async function getGameStatus(wallet) {
       canPlay: false,
       hasCompletedGame: false,
       hasMinted: false,
-      reason: "Wallet is not registered"
+      reason: "Wallet is not registered",
     };
   }
 
@@ -40,13 +41,19 @@ export async function getGameStatus(wallet) {
   const isAllowlisted = await isWalletAllowlisted(walletAddress);
   const settings = await getSettings();
   const latestSession = sessions[0] || null;
-  const mintedCount = sessions.filter((session) => session.status === "MINTED").length;
+  const mintedCount = sessions.filter(
+    (session) => session.status === "MINTED",
+  ).length;
   const hasCompletedGame = latestSession?.status === "COMPLETED";
   const hasActiveGame = latestSession?.status === "ACTIVE";
-  const hasInviteAccess = isAllowlisted || !settings.inviteRequired || Boolean(invite);
+  const hasInviteAccess =
+    isAllowlisted || !settings.inviteRequired || Boolean(invite);
   const remainingMints = Math.max(maxMintsPerWallet - mintedCount, 0);
   const canPlay =
-    hasInviteAccess && remainingMints > 0 && !hasCompletedGame && !hasActiveGame;
+    hasInviteAccess &&
+    remainingMints > 0 &&
+    !hasCompletedGame &&
+    !hasActiveGame;
 
   return {
     registered: true,
@@ -69,52 +76,36 @@ export async function getGameStatus(wallet) {
           remainingMints,
           latestSession,
           hasActiveGame,
-          hasCompletedGame
-        })
+          hasCompletedGame,
+        }),
   };
 }
 
 export async function startGame(wallet) {
   const walletAddress = normalizeWallet(wallet);
-  const user = await findUser(walletAddress);
+  const result = await prepareGameStart(walletAddress, { maxMintsPerWallet });
 
-  if (!user) {
+  if (!result.userExists) {
     throw forbidden("Wallet must be registered before starting a game");
   }
 
-  const invite = await findInviteByWallet(walletAddress);
-  const isAllowlisted = await isWalletAllowlisted(walletAddress);
-  const settings = await getSettings();
-  if (settings.inviteRequired && !invite && !isAllowlisted) {
+  if (result.inviteRequired && !result.hasInvite && !result.isAllowlisted) {
     throw forbidden("Wallet must redeem an invite code before starting a game");
   }
 
-  const sessions = await findSessionsByWallet(walletAddress);
-  const mintedCount = sessions.filter((session) => session.status === "MINTED").length;
-  if (mintedCount >= maxMintsPerWallet) {
+  if (result.mintedCount >= maxMintsPerWallet) {
     throw conflict("Wallet mint limit reached");
   }
 
-  const existingSession = sessions.find((session) =>
-    ["ACTIVE", "COMPLETED"].includes(session.status)
-  );
-
-  if (existingSession?.status === "ACTIVE") {
-    return existingSession;
+  if (result.session?.status === "ACTIVE") {
+    return result.session;
   }
 
-  if (existingSession) {
+  if (result.session) {
     throw conflict("Wallet has a locked game result waiting to be minted");
   }
 
-  try {
-    return await createSession(walletAddress);
-  } catch (error) {
-    if (error.code === "PENDING_SESSION") {
-      throw conflict(error.message);
-    }
-    throw error;
-  }
+  throw new Error("Failed to create game session");
 }
 
 export async function completeGame(input) {
@@ -138,7 +129,7 @@ export async function completeGame(input) {
     score: input.score,
     snakeLength: input.snakeLength,
     finalSnakeCells: input.finalSnakeCells,
-    moves: input.moves
+    moves: input.moves,
   });
 
   const payload = buildMintPayload({
@@ -147,31 +138,31 @@ export async function completeGame(input) {
     score: input.score,
     snakeLength: input.snakeLength,
     finalSnakeCells: input.finalSnakeCells,
-    revealBlock: await pickRevealBlock()
+    revealBlock: await pickRevealBlock(),
   });
   const signature = await signMintPayload(payload);
 
   const updatedSession = await updateSession(session.id, {
-      status: "COMPLETED",
-      endedAt: new Date().toISOString(),
-      score: input.score,
-      snakeLength: input.snakeLength,
-      finalSnakeCells: JSON.stringify(input.finalSnakeCells),
-      moves: JSON.stringify(input.moves),
-      deathReason: input.deathReason,
-      snakeDataHash: payload.snakeDataHash,
-      revealBlock: payload.revealBlock,
-      random: false,
-      mintPayloadHash: payload.payloadHash,
-      mintSignature: signature
+    status: "COMPLETED",
+    endedAt: new Date().toISOString(),
+    score: input.score,
+    snakeLength: input.snakeLength,
+    finalSnakeCells: JSON.stringify(input.finalSnakeCells),
+    moves: JSON.stringify(input.moves),
+    deathReason: input.deathReason,
+    snakeDataHash: payload.snakeDataHash,
+    revealBlock: payload.revealBlock,
+    random: false,
+    mintPayloadHash: payload.payloadHash,
+    mintSignature: signature,
   });
 
   return {
     session: updatedSession,
     mint: {
       ...payload,
-      signature
-    }
+      signature,
+    },
   };
 }
 
@@ -195,12 +186,16 @@ export async function generateRandomResult(wallet) {
   }
 
   const sessions = await findSessionsByWallet(walletAddress);
-  const mintedCount = sessions.filter((item) => item.status === "MINTED").length;
+  const mintedCount = sessions.filter(
+    (item) => item.status === "MINTED",
+  ).length;
   if (mintedCount >= maxMintsPerWallet) {
     throw conflict("Wallet mint limit reached");
   }
   if (sessions.some((item) => ["ACTIVE", "COMPLETED"].includes(item.status))) {
-    throw conflict("Finish or mint your pending result before generating a random one");
+    throw conflict(
+      "Finish or mint your pending result before generating a random one",
+    );
   }
 
   const session = await createSession(walletAddress);
@@ -214,7 +209,7 @@ export async function generateRandomResult(wallet) {
     snakeLength,
     finalSnakeCells: [],
     random: true,
-    revealBlock: await pickRevealBlock()
+    revealBlock: await pickRevealBlock(),
   });
   const signature = await signMintPayload(payload);
 
@@ -227,15 +222,15 @@ export async function generateRandomResult(wallet) {
     revealBlock: payload.revealBlock,
     random: true,
     mintPayloadHash: payload.payloadHash,
-    mintSignature: signature
+    mintSignature: signature,
   });
 
   return {
     session: updatedSession,
     mint: {
       ...payload,
-      signature
-    }
+      signature,
+    },
   };
 }
 
@@ -243,7 +238,10 @@ export async function getLockedResult(wallet) {
   const walletAddress = normalizeWallet(wallet);
   const session = (await findSessionsByWallet(walletAddress))
     .filter((item) => ["COMPLETED", "MINTED"].includes(item.status))
-    .sort((a, b) => new Date(b.endedAt || b.updatedAt) - new Date(a.endedAt || a.updatedAt))[0];
+    .sort(
+      (a, b) =>
+        new Date(b.endedAt || b.updatedAt) - new Date(a.endedAt || a.updatedAt),
+    )[0];
 
   if (!session) {
     throw notFound("No locked game result found for this wallet");
@@ -256,7 +254,10 @@ export async function getLockedResults(wallet) {
   const walletAddress = normalizeWallet(wallet);
   const sessions = (await findSessionsByWallet(walletAddress))
     .filter((item) => ["COMPLETED", "MINTED"].includes(item.status))
-    .sort((a, b) => new Date(b.endedAt || b.updatedAt) - new Date(a.endedAt || a.updatedAt));
+    .sort(
+      (a, b) =>
+        new Date(b.endedAt || b.updatedAt) - new Date(a.endedAt || a.updatedAt),
+    );
 
   return sessions;
 }
@@ -265,7 +266,7 @@ export function serializeSessionResult(session) {
   return {
     ...session,
     finalSnakeCells: parseJsonField(session.finalSnakeCells, []),
-    moves: parseJsonField(session.moves, [])
+    moves: parseJsonField(session.moves, []),
   };
 }
 
@@ -297,7 +298,7 @@ export async function recordMint({ wallet, sessionId, tokenId, txHash }) {
   }
 
   const mintedCount = (await findSessionsByWallet(walletAddress)).filter(
-    (item) => item.status === "MINTED"
+    (item) => item.status === "MINTED",
   ).length;
   if (mintedCount >= maxMintsPerWallet) {
     throw conflict("Wallet mint limit reached");
@@ -309,7 +310,7 @@ export async function recordMint({ wallet, sessionId, tokenId, txHash }) {
       sessionId,
       tokenId,
       txHash,
-      consumeInvite: !isAllowlisted
+      consumeInvite: !isAllowlisted,
     });
   } catch (error) {
     if (
@@ -371,11 +372,17 @@ export async function getReplayBySession(sessionId) {
     snakeLength: session.snakeLength,
     finalSnakeCells: parseJsonField(session.finalSnakeCells, []),
     moves: parseJsonField(session.moves, []),
-    endedAt: session.endedAt || session.updatedAt
+    endedAt: session.endedAt || session.updatedAt,
   };
 }
 
-function validateGameResult({ startedAt, score, snakeLength, finalSnakeCells, moves }) {
+function validateGameResult({
+  startedAt,
+  score,
+  snakeLength,
+  finalSnakeCells,
+  moves,
+}) {
   if (!Array.isArray(finalSnakeCells) || finalSnakeCells.length === 0) {
     throw badRequest("finalSnakeCells must be a non-empty array");
   }
@@ -400,7 +407,9 @@ function validateGameResult({ startedAt, score, snakeLength, finalSnakeCells, mo
   const occupied = new Set();
   for (const cell of finalSnakeCells) {
     if (!Number.isInteger(cell?.x) || !Number.isInteger(cell?.y)) {
-      throw badRequest("Each final snake cell must include integer x and y values");
+      throw badRequest(
+        "Each final snake cell must include integer x and y values",
+      );
     }
 
     const key = `${cell.x}:${cell.y}`;
@@ -416,7 +425,9 @@ function validateGameResult({ startedAt, score, snakeLength, finalSnakeCells, mo
 
   for (const move of moves) {
     if (!["UP", "DOWN", "LEFT", "RIGHT"].includes(move.direction)) {
-      throw badRequest("moves can only include UP, DOWN, LEFT, or RIGHT directions");
+      throw badRequest(
+        "moves can only include UP, DOWN, LEFT, or RIGHT directions",
+      );
     }
 
     if (typeof move.tick === "number") {
@@ -427,7 +438,10 @@ function validateGameResult({ startedAt, score, snakeLength, finalSnakeCells, mo
 
     if (typeof move.atMs === "number") {
       if (move.atMs < previousAtMs) throwBotDetected();
-      if (previousAtMs >= 0 && move.atMs - previousAtMs < env.minSecondsPerMove * 1000) {
+      if (
+        previousAtMs >= 0 &&
+        move.atMs - previousAtMs < env.minSecondsPerMove * 1000
+      ) {
         impossibleBurstCount += 1;
       }
       previousAtMs = move.atMs;
@@ -450,13 +464,15 @@ function getBlockedReason({
   remainingMints,
   latestSession,
   hasActiveGame,
-  hasCompletedGame
+  hasCompletedGame,
 }) {
   if (!hasInviteAccess) return "Wallet needs an invite code";
   if (remainingMints <= 0) return "Wallet mint limit reached";
   if (hasActiveGame) return "Game session is already active";
-  if (hasCompletedGame) return "Game result must be minted before starting another run";
-  if (latestSession?.status === "EXPIRED") return "Previous game session expired";
+  if (hasCompletedGame)
+    return "Game result must be minted before starting another run";
+  if (latestSession?.status === "EXPIRED")
+    return "Previous game session expired";
   return "Wallet cannot play";
 }
 

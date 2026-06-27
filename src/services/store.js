@@ -22,6 +22,7 @@ export const updateSettings = selectedStore.updateSettings;
 export const markInviteMinted = selectedStore.markInviteMinted;
 export const findSessionsByWallet = selectedStore.findSessionsByWallet;
 export const findSessionById = selectedStore.findSessionById;
+export const prepareGameStart = selectedStore.prepareGameStart;
 export const createSession = selectedStore.createSession;
 export const updateSession = selectedStore.updateSession;
 export const createMintRecord = selectedStore.createMintRecord;

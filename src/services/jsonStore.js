@@ -13,8 +13,8 @@ const emptyState = {
   inviteCodes: [],
   allowlist: [],
   settings: {
-    inviteRequired: true
-  }
+    inviteRequired: true,
+  },
 };
 
 export async function upsertUser(walletAddress) {
@@ -29,7 +29,7 @@ export async function upsertUser(walletAddress) {
         registeredAt: timestamp,
         hasMinted: false,
         createdAt: timestamp,
-        updatedAt: timestamp
+        updatedAt: timestamp,
       };
       state.users.push(user);
     }
@@ -40,7 +40,9 @@ export async function upsertUser(walletAddress) {
 
 export async function findUser(walletAddress) {
   const state = await readState();
-  return state.users.find((user) => user.walletAddress === walletAddress) || null;
+  return (
+    state.users.find((user) => user.walletAddress === walletAddress) || null
+  );
 }
 
 export async function createInviteCodes({ count, createdBy }) {
@@ -54,7 +56,7 @@ export async function createInviteCodes({ count, createdBy }) {
       redeemedBy: null,
       redeemedAt: null,
       mintedBy: null,
-      mintedAt: null
+      mintedAt: null,
     }));
 
     state.inviteCodes.push(...codes);
@@ -79,7 +81,9 @@ export async function listInviteCodes() {
 export async function redeemInviteCode({ code, walletAddress }) {
   return updateState((state) => {
     const normalizedCode = normalizeCode(code);
-    const invite = state.inviteCodes.find((item) => item.code === normalizedCode);
+    const invite = state.inviteCodes.find(
+      (item) => item.code === normalizedCode,
+    );
 
     if (!invite) {
       const error = new Error("Invite code does not exist");
@@ -107,7 +111,10 @@ export async function redeemInviteCode({ code, walletAddress }) {
 // no longer drop the invite once it has been used for a first mint.
 export async function findInviteByWallet(walletAddress) {
   const state = await readState();
-  return state.inviteCodes.find((invite) => invite.redeemedBy === walletAddress) || null;
+  return (
+    state.inviteCodes.find((invite) => invite.redeemedBy === walletAddress) ||
+    null
+  );
 }
 
 export async function listAllowlist() {
@@ -119,16 +126,23 @@ export async function listAllowlist() {
 
 export async function addAllowlistWallets({ walletAddresses, addedBy }) {
   return updateState((state) => {
+    // O(1) membership instead of scanning the whole allowlist per wallet — keeps
+    // big batches (up to 5000) fast even against a large existing list. Also
+    // dedupes within the incoming batch.
+    const existing = new Set(
+      state.allowlist.map((entry) => entry.walletAddress),
+    );
     const added = [];
 
     for (const walletAddress of walletAddresses) {
-      if (state.allowlist.some((entry) => entry.walletAddress === walletAddress)) continue;
+      if (existing.has(walletAddress)) continue;
+      existing.add(walletAddress);
 
       const entry = {
         id: randomUUID(),
         walletAddress,
         addedBy,
-        addedAt: now()
+        addedAt: now(),
       };
       state.allowlist.push(entry);
       added.push(entry);
@@ -141,7 +155,9 @@ export async function addAllowlistWallets({ walletAddresses, addedBy }) {
 export async function removeAllowlistWallet(walletAddress) {
   return updateState((state) => {
     const before = state.allowlist.length;
-    state.allowlist = state.allowlist.filter((entry) => entry.walletAddress !== walletAddress);
+    state.allowlist = state.allowlist.filter(
+      (entry) => entry.walletAddress !== walletAddress,
+    );
     return before !== state.allowlist.length;
   });
 }
@@ -167,7 +183,7 @@ export async function updateSettings(data) {
   return updateState((state) => {
     state.settings = {
       ...state.settings,
-      ...data
+      ...data,
     };
     return state.settings;
   });
@@ -176,7 +192,7 @@ export async function updateSettings(data) {
 export async function markInviteMinted({ walletAddress }) {
   return updateState((state) => {
     const invite = state.inviteCodes.find(
-      (item) => item.redeemedBy === walletAddress && !item.mintedBy
+      (item) => item.redeemedBy === walletAddress && !item.mintedBy,
     );
     if (!invite) return null;
 
@@ -196,6 +212,81 @@ export async function findSessionsByWallet(walletAddress) {
 export async function findSessionById(id) {
   const state = await readState();
   return state.sessions.find((session) => session.id === id) || null;
+}
+
+export async function prepareGameStart(walletAddress, { maxMintsPerWallet }) {
+  return updateState((state) => {
+    const inviteRequired = state.settings?.inviteRequired ?? true;
+    const hasInvite = state.inviteCodes.some(
+      (invite) => invite.redeemedBy === walletAddress,
+    );
+    const isAllowlisted = state.allowlist.some(
+      (entry) => entry.walletAddress === walletAddress,
+    );
+    const userExists = state.users.some(
+      (user) => user.walletAddress === walletAddress,
+    );
+    const sessions = state.sessions
+      .filter((session) => session.walletAddress === walletAddress)
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    const mintedCount = sessions.filter(
+      (session) => session.status === "MINTED",
+    ).length;
+    const existingSession =
+      sessions.find((session) =>
+        ["ACTIVE", "COMPLETED"].includes(session.status),
+      ) || null;
+
+    if (
+      !userExists ||
+      (inviteRequired && !hasInvite && !isAllowlisted) ||
+      mintedCount >= maxMintsPerWallet ||
+      existingSession
+    ) {
+      return {
+        userExists,
+        inviteRequired,
+        hasInvite,
+        isAllowlisted,
+        mintedCount,
+        session: existingSession,
+      };
+    }
+
+    const timestamp = now();
+    const session = {
+      id: randomUUID(),
+      walletAddress,
+      status: "ACTIVE",
+      startedAt: timestamp,
+      endedAt: null,
+      score: null,
+      snakeLength: null,
+      finalSnakeCells: null,
+      moves: null,
+      deathReason: null,
+      replayGifUrl: null,
+      mintPayloadHash: null,
+      mintSignature: null,
+      snakeDataHash: null,
+      revealBlock: null,
+      random: false,
+      mintedTokenId: null,
+      txHash: null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    state.sessions.push(session);
+
+    return {
+      userExists,
+      inviteRequired,
+      hasInvite,
+      isAllowlisted,
+      mintedCount,
+      session,
+    };
+  });
 }
 
 export async function createSession(walletAddress) {
@@ -221,7 +312,7 @@ export async function createSession(walletAddress) {
       mintedTokenId: null,
       txHash: null,
       createdAt: timestamp,
-      updatedAt: timestamp
+      updatedAt: timestamp,
     };
     state.sessions.push(session);
     return session;
@@ -243,7 +334,7 @@ export async function createMintRecord({
   sessionId,
   tokenId,
   txHash,
-  consumeInvite = true
+  consumeInvite = true,
 }) {
   return updateState((state) => {
     if (state.mintRecords.some((record) => record.sessionId === sessionId)) {
@@ -264,11 +355,13 @@ export async function createMintRecord({
       tokenId,
       sessionId,
       txHash,
-      mintedAt: now()
+      mintedAt: now(),
     };
     state.mintRecords.push(mintRecord);
 
-    const user = state.users.find((item) => item.walletAddress === walletAddress);
+    const user = state.users.find(
+      (item) => item.walletAddress === walletAddress,
+    );
     if (user) {
       user.hasMinted = true;
       user.updatedAt = now();
@@ -284,7 +377,7 @@ export async function createMintRecord({
 
     if (consumeInvite) {
       const invite = state.inviteCodes.find(
-        (item) => item.redeemedBy === walletAddress && !item.mintedBy
+        (item) => item.redeemedBy === walletAddress && !item.mintedBy,
       );
       if (invite) {
         invite.mintedBy = walletAddress;
@@ -340,8 +433,8 @@ function normalizeState(state) {
     allowlist: Array.isArray(state.allowlist) ? state.allowlist : [],
     settings: {
       ...emptyState.settings,
-      ...(state.settings || {})
-    }
+      ...(state.settings || {}),
+    },
   };
 }
 

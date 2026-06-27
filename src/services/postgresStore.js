@@ -17,7 +17,7 @@ const sessionColumns = {
   revealBlock: "reveal_block",
   random: "random",
   mintedTokenId: "minted_token_id",
-  txHash: "tx_hash"
+  txHash: "tx_hash",
 };
 
 export async function upsertUser(walletAddress) {
@@ -30,7 +30,7 @@ export async function upsertUser(walletAddress) {
      ON CONFLICT (wallet_address)
      DO UPDATE SET updated_at = users.updated_at
      RETURNING *`,
-    [randomUUID(), walletAddress, timestamp]
+    [randomUUID(), walletAddress, timestamp],
   );
   return mapUser(result.rows[0]);
 }
@@ -38,7 +38,7 @@ export async function upsertUser(walletAddress) {
 export async function findUser(walletAddress) {
   const result = await getPool().query(
     "SELECT * FROM users WHERE wallet_address = $1",
-    [walletAddress]
+    [walletAddress],
   );
   return result.rows[0] ? mapUser(result.rows[0]) : null;
 }
@@ -53,7 +53,7 @@ export async function createInviteCodes({ count, createdBy }) {
   for (let index = 0; index < count; index += 1) {
     const offset = index * 4;
     placeholders.push(
-      `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4})`
+      `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4})`,
     );
     values.push(randomUUID(), makeInviteCode(), createdBy, timestamp);
   }
@@ -62,7 +62,7 @@ export async function createInviteCodes({ count, createdBy }) {
     `INSERT INTO invite_codes (id, code, created_by, created_at)
      VALUES ${placeholders.join(", ")}
      RETURNING *`,
-    values
+    values,
   );
   return result.rows.map(mapInvite);
 }
@@ -74,7 +74,7 @@ export async function clearInviteCodes() {
 
 export async function listInviteCodes() {
   const result = await getPool().query(
-    "SELECT * FROM invite_codes ORDER BY created_at DESC"
+    "SELECT * FROM invite_codes ORDER BY created_at DESC",
   );
   return result.rows.map(mapInvite);
 }
@@ -84,7 +84,7 @@ export async function redeemInviteCode({ code, walletAddress }) {
     const normalizedCode = normalizeCode(code);
     const result = await client.query(
       "SELECT * FROM invite_codes WHERE code = $1 FOR UPDATE",
-      [normalizedCode]
+      [normalizedCode],
     );
     const invite = result.rows[0];
 
@@ -102,7 +102,7 @@ export async function redeemInviteCode({ code, walletAddress }) {
          SET redeemed_by = $1, redeemed_at = $2
          WHERE id = $3
          RETURNING *`,
-        [walletAddress, now(), invite.id]
+        [walletAddress, now(), invite.id],
       );
       return mapInvite(updated.rows[0]);
     }
@@ -121,14 +121,14 @@ export async function findInviteByWallet(walletAddress) {
      WHERE redeemed_by = $1
      ORDER BY redeemed_at ASC
      LIMIT 1`,
-    [walletAddress]
+    [walletAddress],
   );
   return result.rows[0] ? mapInvite(result.rows[0]) : null;
 }
 
 export async function listAllowlist() {
   const result = await getPool().query(
-    "SELECT * FROM allowlist ORDER BY added_at DESC"
+    "SELECT * FROM allowlist ORDER BY added_at DESC",
   );
   return result.rows.map(mapAllowlist);
 }
@@ -143,7 +143,7 @@ export async function addAllowlistWallets({ walletAddresses, addedBy }) {
   walletAddresses.forEach((walletAddress, index) => {
     const offset = index * 4;
     placeholders.push(
-      `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4})`
+      `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4})`,
     );
     values.push(randomUUID(), walletAddress, addedBy, timestamp);
   });
@@ -153,7 +153,7 @@ export async function addAllowlistWallets({ walletAddresses, addedBy }) {
      VALUES ${placeholders.join(", ")}
      ON CONFLICT (wallet_address) DO NOTHING
      RETURNING *`,
-    values
+    values,
   );
   return result.rows.map(mapAllowlist);
 }
@@ -161,7 +161,7 @@ export async function addAllowlistWallets({ walletAddresses, addedBy }) {
 export async function removeAllowlistWallet(walletAddress) {
   const result = await getPool().query(
     "DELETE FROM allowlist WHERE wallet_address = $1",
-    [walletAddress]
+    [walletAddress],
   );
   return result.rowCount > 0;
 }
@@ -174,17 +174,17 @@ export async function clearAllowlist() {
 export async function isWalletAllowlisted(walletAddress) {
   const result = await getPool().query(
     "SELECT EXISTS (SELECT 1 FROM allowlist WHERE wallet_address = $1) AS exists",
-    [walletAddress]
+    [walletAddress],
   );
   return result.rows[0].exists;
 }
 
 export async function getSettings() {
   const result = await getPool().query(
-    "SELECT invite_required FROM app_settings WHERE id = 1"
+    "SELECT invite_required FROM app_settings WHERE id = 1",
   );
   return {
-    inviteRequired: result.rows[0]?.invite_required ?? true
+    inviteRequired: result.rows[0]?.invite_required ?? true,
   };
 }
 
@@ -202,7 +202,7 @@ export async function updateSettings(data) {
      DO UPDATE SET invite_required = EXCLUDED.invite_required,
                    updated_at = EXCLUDED.updated_at
      RETURNING invite_required`,
-    [inviteRequired, now()]
+    [inviteRequired, now()],
   );
   return { inviteRequired: result.rows[0].invite_required };
 }
@@ -221,7 +221,7 @@ export async function markInviteMinted({ walletAddress }) {
      SET minted_by = $1, minted_at = $2
      WHERE id = (SELECT id FROM selected)
      RETURNING *`,
-    [walletAddress, now()]
+    [walletAddress, now()],
   );
   return result.rows[0] ? mapInvite(result.rows[0]) : null;
 }
@@ -232,7 +232,7 @@ export async function findSessionsByWallet(walletAddress) {
      FROM game_sessions
      WHERE wallet_address = $1
      ORDER BY created_at DESC`,
-    [walletAddress]
+    [walletAddress],
   );
   return result.rows.map(mapSession);
 }
@@ -240,9 +240,95 @@ export async function findSessionsByWallet(walletAddress) {
 export async function findSessionById(id) {
   const result = await getPool().query(
     "SELECT * FROM game_sessions WHERE id = $1",
-    [id]
+    [id],
   );
   return result.rows[0] ? mapSession(result.rows[0]) : null;
+}
+
+// Single round-trip start. The partial unique index
+// game_sessions_one_pending_per_wallet_idx guarantees at most one
+// ACTIVE/COMPLETED session per wallet, so eligibility and the insert can run in
+// one statement with no transaction and no advisory lock — that hold time per
+// connection was the throughput ceiling under burst load. The happy path is one
+// query; only a rare lost insert race needs a single follow-up read.
+export async function prepareGameStart(walletAddress, { maxMintsPerWallet }) {
+  const result = await getPool().query(
+    `WITH summary AS (
+       SELECT
+         EXISTS(SELECT 1 FROM users WHERE wallet_address = $2) AS user_exists,
+         EXISTS(SELECT 1 FROM invite_codes WHERE redeemed_by = $2) AS has_invite,
+         EXISTS(SELECT 1 FROM allowlist WHERE wallet_address = $2) AS is_allowlisted,
+         COALESCE((SELECT invite_required FROM app_settings WHERE id = 1), TRUE) AS invite_required,
+         (SELECT COUNT(*)::int FROM game_sessions
+            WHERE wallet_address = $2 AND status = 'MINTED') AS minted_count
+     ),
+     ins AS (
+       INSERT INTO game_sessions (
+         id, wallet_address, status, started_at, created_at, updated_at
+       )
+       SELECT $1, $2, 'ACTIVE', $3, $3, $3
+       FROM summary
+       WHERE summary.user_exists
+         AND (NOT summary.invite_required OR summary.has_invite OR summary.is_allowlisted)
+         AND summary.minted_count < $4
+       ON CONFLICT (wallet_address) WHERE status IN ('ACTIVE', 'COMPLETED')
+       DO NOTHING
+       RETURNING *
+     )
+     SELECT
+       summary.user_exists,
+       summary.has_invite,
+       summary.is_allowlisted,
+       summary.invite_required,
+       summary.minted_count,
+       (SELECT row_to_json(ins) FROM ins) AS inserted,
+       (SELECT row_to_json(live)
+          FROM (
+            SELECT *
+            FROM game_sessions
+            WHERE wallet_address = $2 AND status IN ('ACTIVE', 'COMPLETED')
+            ORDER BY created_at DESC
+            LIMIT 1
+          ) live) AS existing
+     FROM summary`,
+    [randomUUID(), walletAddress, now(), maxMintsPerWallet],
+  );
+
+  const row = result.rows[0];
+  const eligible =
+    row.user_exists &&
+    (!row.invite_required || row.has_invite || row.is_allowlisted) &&
+    row.minted_count < maxMintsPerWallet;
+
+  let session = row.inserted
+    ? mapSession(row.inserted)
+    : row.existing
+      ? mapSession(row.existing)
+      : null;
+
+  // Extremely rare: we were eligible but lost the insert race to a concurrent
+  // start whose commit postdated our snapshot, so `existing` came back null. One
+  // direct read resolves it to the winning ACTIVE session.
+  if (!session && eligible) {
+    const live = await getPool().query(
+      `SELECT *
+       FROM game_sessions
+       WHERE wallet_address = $1 AND status IN ('ACTIVE', 'COMPLETED')
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [walletAddress],
+    );
+    session = live.rows[0] ? mapSession(live.rows[0]) : null;
+  }
+
+  return {
+    userExists: row.user_exists,
+    inviteRequired: row.invite_required,
+    hasInvite: row.has_invite,
+    isAllowlisted: row.is_allowlisted,
+    mintedCount: row.minted_count,
+    session,
+  };
 }
 
 export async function createSession(walletAddress) {
@@ -255,7 +341,7 @@ export async function createSession(walletAddress) {
        WHERE wallet_address = $1 AND status IN ('ACTIVE', 'COMPLETED')
        ORDER BY created_at DESC
        LIMIT 1`,
-      [walletAddress]
+      [walletAddress],
     );
 
     if (existing.rows[0]?.status === "ACTIVE") {
@@ -265,7 +351,7 @@ export async function createSession(walletAddress) {
     if (existing.rows[0]) {
       throw storeError(
         "PENDING_SESSION",
-        "Wallet has a locked game result waiting to be minted"
+        "Wallet has a locked game result waiting to be minted",
       );
     }
 
@@ -276,7 +362,7 @@ export async function createSession(walletAddress) {
        )
        VALUES ($1, $2, 'ACTIVE', $3, $3, $3)
        RETURNING *`,
-      [randomUUID(), walletAddress, timestamp]
+      [randomUUID(), walletAddress, timestamp],
     );
     return mapSession(result.rows[0]);
   });
@@ -300,7 +386,7 @@ export async function updateSession(id, data) {
      SET ${assignments.join(", ")}, updated_at = $${values.length - 1}
      WHERE id = $${values.length}
      RETURNING *`,
-    values
+    values,
   );
   return result.rows[0] ? mapSession(result.rows[0]) : null;
 }
@@ -310,14 +396,14 @@ export async function createMintRecord({
   sessionId,
   tokenId,
   txHash,
-  consumeInvite = true
+  consumeInvite = true,
 }) {
   return withTransaction(async (client) => {
     await lockWallet(client, walletAddress);
 
     const sessionResult = await client.query(
       "SELECT * FROM game_sessions WHERE id = $1 FOR UPDATE",
-      [sessionId]
+      [sessionId],
     );
     const session = sessionResult.rows[0];
 
@@ -328,13 +414,13 @@ export async function createMintRecord({
     if (session.status !== "COMPLETED") {
       throw storeError(
         "DUPLICATE_SESSION",
-        "Session has already been recorded as minted"
+        "Session has already been recorded as minted",
       );
     }
 
     const countResult = await client.query(
       "SELECT COUNT(*)::int AS count FROM mint_records WHERE wallet_address = $1",
-      [walletAddress]
+      [walletAddress],
     );
     if (countResult.rows[0].count >= 3) {
       throw storeError("WALLET_LIMIT", "Wallet mint limit reached");
@@ -349,7 +435,7 @@ export async function createMintRecord({
          )
          VALUES ($1, $2, $3, $4, $5, $6)
          RETURNING *`,
-        [randomUUID(), walletAddress, tokenId, sessionId, txHash, timestamp]
+        [randomUUID(), walletAddress, tokenId, sessionId, txHash, timestamp],
       );
       record = result.rows[0];
     } catch (error) {
@@ -359,7 +445,7 @@ export async function createMintRecord({
           isSession ? "DUPLICATE_SESSION" : "DUPLICATE_TX",
           isSession
             ? "Session has already been recorded as minted"
-            : "Transaction hash has already been recorded"
+            : "Transaction hash has already been recorded",
         );
       }
       throw error;
@@ -369,7 +455,7 @@ export async function createMintRecord({
       `UPDATE users
        SET has_minted = TRUE, updated_at = $1
        WHERE wallet_address = $2`,
-      [timestamp, walletAddress]
+      [timestamp, walletAddress],
     );
 
     await client.query(
@@ -379,7 +465,7 @@ export async function createMintRecord({
            tx_hash = $2,
            updated_at = $3
        WHERE id = $4`,
-      [tokenId, txHash, timestamp, sessionId]
+      [tokenId, txHash, timestamp, sessionId],
     );
 
     if (consumeInvite) {
@@ -395,7 +481,7 @@ export async function createMintRecord({
          UPDATE invite_codes
          SET minted_by = $1, minted_at = $2
          WHERE id = (SELECT id FROM selected)`,
-        [walletAddress, timestamp]
+        [walletAddress, timestamp],
       );
     }
 
@@ -429,7 +515,7 @@ async function withTransaction(callback) {
 
 async function lockWallet(client, walletAddress) {
   await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
-    walletAddress
+    walletAddress,
   ]);
 }
 
@@ -440,7 +526,7 @@ function mapUser(row) {
     registeredAt: toIso(row.registered_at),
     hasMinted: row.has_minted,
     createdAt: toIso(row.created_at),
-    updatedAt: toIso(row.updated_at)
+    updatedAt: toIso(row.updated_at),
   };
 }
 
@@ -453,7 +539,7 @@ function mapInvite(row) {
     redeemedBy: row.redeemed_by,
     redeemedAt: toIso(row.redeemed_at),
     mintedBy: row.minted_by,
-    mintedAt: toIso(row.minted_at)
+    mintedAt: toIso(row.minted_at),
   };
 }
 
@@ -462,7 +548,7 @@ function mapAllowlist(row) {
     id: row.id,
     walletAddress: row.wallet_address,
     addedBy: row.added_by,
-    addedAt: toIso(row.added_at)
+    addedAt: toIso(row.added_at),
   };
 }
 
@@ -482,12 +568,15 @@ function mapSession(row) {
     mintPayloadHash: row.mint_payload_hash,
     mintSignature: row.mint_signature,
     snakeDataHash: row.snake_data_hash,
-    revealBlock: row.reveal_block === null || row.reveal_block === undefined ? null : Number(row.reveal_block),
+    revealBlock:
+      row.reveal_block === null || row.reveal_block === undefined
+        ? null
+        : Number(row.reveal_block),
     random: row.random ?? false,
     mintedTokenId: row.minted_token_id,
     txHash: row.tx_hash,
     createdAt: toIso(row.created_at),
-    updatedAt: toIso(row.updated_at)
+    updatedAt: toIso(row.updated_at),
   };
 }
 
@@ -498,13 +587,15 @@ function mapMintRecord(row) {
     tokenId: row.token_id,
     sessionId: row.session_id,
     txHash: row.tx_hash,
-    mintedAt: toIso(row.minted_at)
+    mintedAt: toIso(row.minted_at),
   };
 }
 
 function toIso(value) {
   if (!value) return null;
-  return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
+  return value instanceof Date
+    ? value.toISOString()
+    : new Date(value).toISOString();
 }
 
 function now() {

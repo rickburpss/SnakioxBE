@@ -45,7 +45,9 @@ const redeemSchema = z.object({
 });
 
 const allowlistAddSchema = adminAuthSchema.extend({
-  wallets: z.array(z.string().min(1)).min(1).max(1000)
+  // 5000/request keeps the JSON body well under the 1mb limit (~225 KB) while
+  // letting big uploads (e.g. 17k) finish in a handful of batches.
+  wallets: z.array(z.string().min(1)).min(1).max(5000)
 });
 
 const allowlistRemoveSchema = adminAuthSchema.extend({
