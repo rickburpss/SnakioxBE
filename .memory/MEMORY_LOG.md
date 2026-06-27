@@ -70,3 +70,35 @@
 - Verified: BE `npm run lint`, FE eslint clean, `vite build` all pass.
 
 ---
+
+## [2026-06-27] — Clear DB, fix mint slowness (commit-reveal wait), surface fast-path
+
+### Project Status & Decisions
+- Cleared all Supabase data on request (TRUNCATE users/game_sessions/mint_records/invite_codes/allowlist + re-seed app_settings). Verified 0 rows. Reusable one-liner given to user.
+- **Root cause of "minting takes forever / too long to sign":** the commit-reveal block wait, NOT the DB/RPC. Contract (Snakiox.sol:166) reverts RevealNotReady() unless block.number > revealBlock; FE waited for that future block BEFORE opening the wallet, showing a frozen "Minting...". Worst on the random->instant-mint path (sign+mint back-to-back). A normal played run usually has revealBlock already mined by mint time => no wait.
+- **Decision (user):** reveal buffer 2 -> 1 block (smallest grind-proof value) + live feedback. Tiny reorg risk accepted on Sepolia.
+- **Decision (user):** add a read-only "instant mint ready / reveal in ~Xs" badge (fast-path surfaced), behind a hide flag.
+
+### What changed (by file)
+- **BE `src/config/env.js`** — `revealBufferBlocks` default 2 -> 1 (env REVEAL_BUFFER_BLOCKS). Halves random-mint wait (~12s typical).
+- **FE `src/web3/mintContract.js`** —
+  - `mintCompletedRun(payload, onStatus)` now takes a status callback; reads price AND waits for reveal block CONCURRENTLY (Promise.all); emits stages: Waiting for reveal block / Confirm in wallet / Confirming on-chain.
+  - `waitForBlock` short-circuits instantly when revealBlock already mined (the played-run fast-path); polls 2.5s with live countdown.
+  - NEW `getRevealStatus(revealBlock)` — read-only {ready, blocksRemaining, secondsRemaining}; no chain switch, no signing.
+  - `ensureChain` now checks cached eth_chainId first and SKIPS wallet_switchEthereumChain when already on-chain (was firing before every read => latency; fixes "slow just to show wallet" + post-mint lag).
+- **FE `src/App.jsx`** — `mintFromPayload` wires onStatus into the loading label. ResultPanel polls getRevealStatus (only while a mintable run is pending & not ready, every 6s) and shows `.reveal-badge` ("Instant mint ready" / "Reveal locks in ~Xs"). New const `SHOW_REVEAL_STATUS` from VITE_SHOW_REVEAL_STATUS.
+- **FE `src/styles.css`** — `.reveal-badge` + `.reveal-badge.ready` styles.
+
+### Problems Solved / Lessons Learned
+- [Mint feels broken/frozen]: the dead time was a pre-popup block wait, not perf. Fix = shrink buffer + run waits concurrently + live status, and skip the wait entirely when the block already passed.
+- [Fast-path cannot be gamed]: all security is on-chain/in-signature (revealBlock is SIGNED; contract checks block.number>revealBlock and blockhash!=0; locked one-session-per-wallet prevents re-roll). Client skipping the wait only lets a VALID mint go sooner; sending early just reverts.
+- [Hide the fast-path badge]: set VITE_SHOW_REVEAL_STATUS=false. To hide the whole GENERATE RANDOM & MINT owner feature, gate the ControlPanel(~1646)+ResultPanel(~1798) buttons behind a similar flag (offered, not yet wired).
+- TRUST_PROXY guidance: use 1 behind a single managed proxy/LB (real client IP for rate limiting); never `true` (express-rate-limit ERR_ERL_PERMISSIVE_TRUST_PROXY + spoofable); 2 only if stacking Cloudflare+host LB; false for no proxy.
+- Note: user/linter added Redis (config/redis.js, rate-limit-redis, idempotency middleware) for shared rate-limit + idempotency across instances — the real crash-safety net at scale.
+
+### Goals & Next Steps
+- Restart BE to pick up REVEAL_BUFFER_BLOCKS=1; FE changes live on vite reload.
+- Optional: wire VITE_SHOW_RANDOM_MINT flag to hide the random-mint buttons from normal players.
+- Verified: FE eslint clean + `vite build` pass; BE env.js `node --check` ok.
+
+---
