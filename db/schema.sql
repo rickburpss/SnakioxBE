@@ -57,11 +57,19 @@ CREATE TABLE IF NOT EXISTS game_sessions (
   replay_gif_url TEXT,
   mint_payload_hash TEXT,
   mint_signature TEXT,
+  snake_data_hash TEXT,
+  reveal_block BIGINT,
+  random BOOLEAN NOT NULL DEFAULT FALSE,
   minted_token_id TEXT,
   tx_hash TEXT,
   created_at TIMESTAMPTZ NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL
 );
+
+-- Migrations for existing deployments (no-ops on fresh installs).
+ALTER TABLE game_sessions ADD COLUMN IF NOT EXISTS snake_data_hash TEXT;
+ALTER TABLE game_sessions ADD COLUMN IF NOT EXISTS reveal_block BIGINT;
+ALTER TABLE game_sessions ADD COLUMN IF NOT EXISTS random BOOLEAN NOT NULL DEFAULT FALSE;
 
 CREATE INDEX IF NOT EXISTS game_sessions_wallet_created_idx
   ON game_sessions (wallet_address, created_at DESC);

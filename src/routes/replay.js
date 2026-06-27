@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { saveReplay } from "../services/gameService.js";
+import { getReplayBySession, saveReplay } from "../services/gameService.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 
 const router = Router();
@@ -27,6 +27,16 @@ router.post(
       replayURI: session.replayGifUrl,
       sessionId: session.id
     });
+  })
+);
+
+// Public: serve a locked run's replay so the on-chain replayURI (the
+// "store on the backend" choice) resolves to real data.
+router.get(
+  "/:sessionId",
+  asyncHandler(async (req, res) => {
+    const replay = await getReplayBySession(req.params.sessionId);
+    res.json(replay);
   })
 );
 

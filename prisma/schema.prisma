@@ -1,57 +1,105 @@
+// Prisma is the source-of-truth schema for the Snakiox Supabase database.
+// It is kept in sync with db/schema.sql (applied by src/scripts/initDatabase.js).
+// The runtime data layer uses node-postgres (src/services/postgresStore.js);
+// Prisma is used for migrations, introspection and Studio.
+//
+// Useful commands:
+//   npm run prisma:generate   -> regenerate the client
+//   npm run prisma:studio     -> browse data
+//   npx prisma db push        -> push this schema to Supabase
+//   npx prisma db pull        -> re-introspect Supabase into this file
+
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  // Transaction-mode pooler (pgbouncer) for app queries.
+  url       = env("DATABASE_URL")
+  // Session-mode pooler for migrations / introspection.
+  directUrl = env("DIRECT_URL")
 }
 
 model User {
-  id            String        @id @default(cuid())
-  walletAddress String        @unique
-  registeredAt DateTime      @default(now())
-  hasMinted     Boolean       @default(false)
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
-  sessions      GameSession[]
-  mintRecords   MintRecord[]
+  id            String   @id
+  walletAddress String   @unique @map("wallet_address")
+  registeredAt  DateTime @map("registered_at") @db.Timestamptz(6)
+  hasMinted     Boolean  @default(false) @map("has_minted")
+  createdAt     DateTime @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime @map("updated_at") @db.Timestamptz(6)
+
+  @@map("users")
+}
+
+model InviteCode {
+  id         String    @id
+  code       String    @unique
+  createdBy  String    @map("created_by")
+  createdAt  DateTime  @map("created_at") @db.Timestamptz(6)
+  redeemedBy String?   @map("redeemed_by")
+  redeemedAt DateTime? @map("redeemed_at") @db.Timestamptz(6)
+  mintedBy   String?   @map("minted_by")
+  mintedAt   DateTime? @map("minted_at") @db.Timestamptz(6)
+
+  @@index([redeemedBy])
+  @@map("invite_codes")
+}
+
+model AllowlistEntry {
+  id            String   @id
+  walletAddress String   @unique @map("wallet_address")
+  addedBy       String   @map("added_by")
+  addedAt       DateTime @map("added_at") @db.Timestamptz(6)
+
+  @@map("allowlist")
+}
+
+model AppSettings {
+  id             Int      @id @default(1) @db.SmallInt
+  inviteRequired Boolean  @default(true) @map("invite_required")
+  updatedAt      DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@map("app_settings")
 }
 
 model GameSession {
-  id              String        @id @default(cuid())
-  walletAddress   String
-  status          String        @default("ACTIVE")
-  startedAt       DateTime      @default(now())
-  endedAt         DateTime?
+  id              String      @id
+  walletAddress   String      @map("wallet_address")
+  status          String
+  startedAt       DateTime    @map("started_at") @db.Timestamptz(6)
+  endedAt         DateTime?   @map("ended_at") @db.Timestamptz(6)
   score           Int?
-  snakeLength     Int?
-  finalSnakeCells String?
+  snakeLength     Int?        @map("snake_length")
+  finalSnakeCells String?     @map("final_snake_cells")
   moves           String?
-  deathReason     String?
-  replayGifUrl    String?
-  mintPayloadHash String?
-  mintSignature   String?
-  mintedTokenId   String?
-  txHash          String?
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
-  user            User          @relation(fields: [walletAddress], references: [walletAddress])
+  deathReason     String?     @map("death_reason")
+  replayGifUrl    String?     @map("replay_gif_url")
+  mintPayloadHash String?     @map("mint_payload_hash")
+  mintSignature   String?     @map("mint_signature")
+  snakeDataHash   String?     @map("snake_data_hash")
+  revealBlock     BigInt?     @map("reveal_block")
+  random          Boolean     @default(false)
+  mintedTokenId   String?     @map("minted_token_id")
+  txHash          String?     @map("tx_hash")
+  createdAt       DateTime    @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime    @map("updated_at") @db.Timestamptz(6)
   mintRecord      MintRecord?
 
-  @@index([walletAddress])
-  @@index([status])
+  @@index([walletAddress, createdAt(sort: Desc)], map: "game_sessions_wallet_created_idx")
+  @@index([walletAddress, status], map: "game_sessions_wallet_status_idx")
+  @@map("game_sessions")
 }
 
 model MintRecord {
-  id            String      @id @default(cuid())
-  walletAddress String
-  tokenId       String
-  sessionId     String      @unique
-  txHash        String      @unique
-  mintedAt      DateTime    @default(now())
-  user          User        @relation(fields: [walletAddress], references: [walletAddress])
+  id            String      @id
+  walletAddress String      @map("wallet_address")
+  tokenId       String      @map("token_id")
+  sessionId     String      @unique @map("session_id")
+  txHash        String      @unique @map("tx_hash")
+  mintedAt      DateTime    @map("minted_at") @db.Timestamptz(6)
   session       GameSession @relation(fields: [sessionId], references: [id])
 
-  @@index([walletAddress])
+  @@index([walletAddress, mintedAt(sort: Desc)], map: "mint_records_wallet_idx")
+  @@map("mint_records")
 }

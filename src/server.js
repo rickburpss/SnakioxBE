@@ -4,12 +4,15 @@ import compression from "compression";
 import helmet from "helmet";
 import morgan from "morgan";
 import { rateLimit } from "express-rate-limit";
+import { RedisStore } from "rate-limit-redis";
 import { env } from "./config/env.js";
+import { closeRedis, getRedis } from "./config/redis.js";
 import authRoutes from "./routes/auth.js";
 import gameRoutes from "./routes/game.js";
 import inviteRoutes from "./routes/invite.js";
 import replayRoutes from "./routes/replay.js";
 import { errorHandler } from "./middleware/errorHandler.js";
+import { idempotency } from "./middleware/idempotency.js";
 import { getGameSignerAddress } from "./services/signatureService.js";
 import { checkStoreHealth, closeStore } from "./services/store.js";
 
@@ -42,14 +45,23 @@ app.use((req, res, next) => {
   next();
 });
 
-const globalLimiter = createLimiter(env.rateLimitMax, "Too many requests");
+// Connect Redis up front so the rate limiters can share one store across every
+// instance. Falls back to per-instance memory stores when REDIS_URL is unset.
+const redis = await getRedis();
+if (redis) {
+  console.log("Redis connected: shared idempotency + rate limiting enabled");
+}
+
+const globalLimiter = createLimiter(env.rateLimitMax, "Too many requests", "rl:global:");
 const gameLimiter = createLimiter(
   env.gameRateLimitMax,
-  "Too many game requests from this address"
+  "Too many game requests from this address",
+  "rl:game:"
 );
 const adminLimiter = createLimiter(
   env.adminRateLimitMax,
-  "Too many admin requests from this address"
+  "Too many admin requests from this address",
+  "rl:admin:"
 );
 
 app.use(globalLimiter);
@@ -87,10 +99,12 @@ app.get("/ready", async (req, res) => {
   }
 });
 
+const idempotent = idempotency();
+
 app.use("/auth", gameLimiter, authRoutes);
-app.use("/game", gameLimiter, gameRoutes);
+app.use("/game", gameLimiter, idempotent, gameRoutes);
 app.use("/invite/admin", adminLimiter);
-app.use("/invite", gameLimiter, inviteRoutes);
+app.use("/invite", gameLimiter, idempotent, inviteRoutes);
 app.use("/replay", gameLimiter, replayRoutes);
 app.use(errorHandler);
 
@@ -123,6 +137,7 @@ async function shutdown(signal) {
       server.close((error) => (error ? reject(error) : resolve()));
     });
     await closeStore();
+    await closeRedis();
     clearTimeout(forceExit);
     process.exit(0);
   } catch (error) {
@@ -134,13 +149,67 @@ async function shutdown(signal) {
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 
-function createLimiter(max, message) {
+// Under traffic a single unhandled rejection (e.g. a transient DB blip) must
+// not take the whole process down. Log it and keep serving. An uncaught
+// synchronous exception leaves the process in an unknown state, so we drain
+// connections and let the supervisor restart us cleanly.
+process.on("unhandledRejection", (reason) => {
+  console.error("Unhandled promise rejection", reason);
+});
+
+process.on("uncaughtException", (error) => {
+  console.error("Uncaught exception", error);
+  shutdown("uncaughtException");
+});
+
+function createLimiter(max, message, prefix) {
   return rateLimit({
     windowMs: env.rateLimitWindowMs,
     max,
     standardHeaders: "draft-7",
     legacyHeaders: false,
     skip: (req) => req.path === "/health" || req.path === "/ready",
-    message: { error: message }
+    message: { error: message },
+    // Shared store when Redis is up; otherwise express-rate-limit's memory store.
+    ...(redis ? { store: buildFailOpenRedisStore(prefix) } : {})
   });
+}
+
+// Wraps the Redis store so a Redis outage fails OPEN (allows the request)
+// instead of bubbling up a 500 — availability over strict rate limiting.
+function buildFailOpenRedisStore(prefix) {
+  const store = new RedisStore({ sendCommand: (...args) => redis.sendCommand(args), prefix });
+
+  return {
+    init: (options) => store.init?.(options),
+    async increment(key) {
+      try {
+        return await store.increment(key);
+      } catch (error) {
+        console.error("Rate limiter Redis error (failing open)", error);
+        return { totalHits: 0, resetTime: new Date(Date.now() + env.rateLimitWindowMs) };
+      }
+    },
+    async decrement(key) {
+      try {
+        await store.decrement(key);
+      } catch {
+        // ignore — best effort
+      }
+    },
+    async resetKey(key) {
+      try {
+        await store.resetKey(key);
+      } catch {
+        // ignore — best effort
+      }
+    },
+    async get(key) {
+      try {
+        return await store.get?.(key);
+      } catch {
+        return undefined;
+      }
+    }
+  };
 }

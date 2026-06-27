@@ -11,16 +11,18 @@ export function getPool() {
   }
 
   if (!pool) {
+    // Supabase (and any managed Postgres) requires TLS. Enable SSL for any
+    // non-local host regardless of NODE_ENV, otherwise the pooler refuses the
+    // connection and the process throws on first query.
+    const useSsl = !isLocalDatabase(env.databaseUrl);
+
     pool = new Pool({
       connectionString: env.databaseUrl,
       max: env.databasePoolMax,
       idleTimeoutMillis: env.databaseIdleTimeoutMs,
       connectionTimeoutMillis: env.databaseConnectionTimeoutMs,
       allowExitOnIdle: false,
-      ssl:
-        env.nodeEnv === "production" && !isLocalDatabase(env.databaseUrl)
-          ? { rejectUnauthorized: false }
-          : undefined
+      ssl: useSsl ? { rejectUnauthorized: false } : undefined
     });
 
     pool.on("error", (error) => {

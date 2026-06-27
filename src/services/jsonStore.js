@@ -102,12 +102,12 @@ export async function redeemInviteCode({ code, walletAddress }) {
   });
 }
 
+// A redeemed code stays valid for the wallet across all of its mint chances
+// (one code, three chances). The per-wallet mint cap is the real limiter, so we
+// no longer drop the invite once it has been used for a first mint.
 export async function findInviteByWallet(walletAddress) {
   const state = await readState();
-  return (
-    state.inviteCodes.find((invite) => invite.redeemedBy === walletAddress && !invite.mintedBy) ||
-    null
-  );
+  return state.inviteCodes.find((invite) => invite.redeemedBy === walletAddress) || null;
 }
 
 export async function listAllowlist() {
@@ -215,6 +215,9 @@ export async function createSession(walletAddress) {
       replayGifUrl: null,
       mintPayloadHash: null,
       mintSignature: null,
+      snakeDataHash: null,
+      revealBlock: null,
+      random: false,
       mintedTokenId: null,
       txHash: null,
       createdAt: timestamp,

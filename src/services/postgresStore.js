@@ -13,6 +13,9 @@ const sessionColumns = {
   replayGifUrl: "replay_gif_url",
   mintPayloadHash: "mint_payload_hash",
   mintSignature: "mint_signature",
+  snakeDataHash: "snake_data_hash",
+  revealBlock: "reveal_block",
+  random: "random",
   mintedTokenId: "minted_token_id",
   txHash: "tx_hash"
 };
@@ -108,11 +111,14 @@ export async function redeemInviteCode({ code, walletAddress }) {
   });
 }
 
+// A redeemed code stays valid for the wallet across all of its mint chances
+// (one code, three chances). The per-wallet mint cap is the real limiter, so we
+// no longer drop the invite once it has been used for a first mint.
 export async function findInviteByWallet(walletAddress) {
   const result = await getPool().query(
     `SELECT *
      FROM invite_codes
-     WHERE redeemed_by = $1 AND minted_at IS NULL
+     WHERE redeemed_by = $1
      ORDER BY redeemed_at ASC
      LIMIT 1`,
     [walletAddress]
@@ -475,6 +481,9 @@ function mapSession(row) {
     replayGifUrl: row.replay_gif_url,
     mintPayloadHash: row.mint_payload_hash,
     mintSignature: row.mint_signature,
+    snakeDataHash: row.snake_data_hash,
+    revealBlock: row.reveal_block === null || row.reveal_block === undefined ? null : Number(row.reveal_block),
+    random: row.random ?? false,
     mintedTokenId: row.minted_token_id,
     txHash: row.tx_hash,
     createdAt: toIso(row.created_at),

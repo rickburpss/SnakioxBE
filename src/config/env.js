@@ -25,6 +25,9 @@ export const env = {
   ),
   trustProxy: parseTrustProxy(process.env.TRUST_PROXY || "1"),
   requestTimeoutMs: Number(process.env.REQUEST_TIMEOUT_MS || 15000),
+  // Optional Redis. When set, idempotency + rate limiting share state across
+  // every backend instance; when unset, both fall back to per-instance memory.
+  redisUrl: process.env.REDIS_URL || "",
   rateLimitWindowMs: Number(process.env.RATE_LIMIT_WINDOW_MS || 60000),
   rateLimitMax: Number(process.env.RATE_LIMIT_MAX || 300),
   gameRateLimitMax: Number(process.env.GAME_RATE_LIMIT_MAX || 120),
@@ -35,8 +38,16 @@ export const env = {
     process.env.MINT_CONTRACT_ADDRESS ||
     "0x0000000000000000000000000000000000000000",
   chainId: BigInt(process.env.CHAIN_ID || "31337"),
+  // RPC used only to read the current block number when committing the
+  // reveal block for a mint signature. Required for on-chain minting.
+  rpcUrl: process.env.RPC_URL || "",
+  // Smallest grind-proof buffer: the reveal block just needs to be unmined when
+  // signed. 1 block (~12s on Sepolia) keeps random->mint snappy. Bump to 2+ if
+  // reorg safety on the reveal block matters more than latency.
+  revealBufferBlocks: Number(process.env.REVEAL_BUFFER_BLOCKS || 1),
   adminWalletAddress: process.env.ADMIN_WALLET_ADDRESS || "",
-  maxGameDurationSeconds: Number(process.env.MAX_GAME_DURATION_SECONDS || 7200),
+  // Games auto-end at 40 min on the client; allow a little margin server-side.
+  maxGameDurationSeconds: Number(process.env.MAX_GAME_DURATION_SECONDS || 2700),
   minSecondsPerMove: Number(process.env.MIN_SECONDS_PER_MOVE || 0.03)
 };
 

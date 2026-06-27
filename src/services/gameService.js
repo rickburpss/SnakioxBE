@@ -1,4 +1,6 @@
+import { randomInt } from "node:crypto";
 import { env } from "../config/env.js";
+import { pickRevealBlock } from "./chainService.js";
 import {
   buildMintPayload,
   normalizeWallet,
@@ -144,7 +146,8 @@ export async function completeGame(input) {
     sessionId: session.id,
     score: input.score,
     snakeLength: input.snakeLength,
-    finalSnakeCells: input.finalSnakeCells
+    finalSnakeCells: input.finalSnakeCells,
+    revealBlock: await pickRevealBlock()
   });
   const signature = await signMintPayload(payload);
 
@@ -156,8 +159,75 @@ export async function completeGame(input) {
       finalSnakeCells: JSON.stringify(input.finalSnakeCells),
       moves: JSON.stringify(input.moves),
       deathReason: input.deathReason,
+      snakeDataHash: payload.snakeDataHash,
+      revealBlock: payload.revealBlock,
+      random: false,
       mintPayloadHash: payload.payloadHash,
       mintSignature: signature
+  });
+
+  return {
+    session: updatedSession,
+    mint: {
+      ...payload,
+      signature
+    }
+  };
+}
+
+// "Random score" mint: no play. Generates one score, signs it with random=true,
+// and locks it as a COMPLETED session. The one-pending-per-wallet rule then
+// blocks playing or generating again until it's minted — so it can't be
+// re-rolled and is bound to the wallet. Rarity still comes from the committed
+// reveal block, so the outcome isn't known when generated.
+export async function generateRandomResult(wallet) {
+  const walletAddress = normalizeWallet(wallet);
+  const user = await findUser(walletAddress);
+  if (!user) {
+    throw forbidden("Wallet must be registered before minting");
+  }
+
+  const invite = await findInviteByWallet(walletAddress);
+  const isAllowlisted = await isWalletAllowlisted(walletAddress);
+  const settings = await getSettings();
+  if (settings.inviteRequired && !invite && !isAllowlisted) {
+    throw forbidden("Wallet must redeem an invite code before minting");
+  }
+
+  const sessions = await findSessionsByWallet(walletAddress);
+  const mintedCount = sessions.filter((item) => item.status === "MINTED").length;
+  if (mintedCount >= maxMintsPerWallet) {
+    throw conflict("Wallet mint limit reached");
+  }
+  if (sessions.some((item) => ["ACTIVE", "COMPLETED"].includes(item.status))) {
+    throw conflict("Finish or mint your pending result before generating a random one");
+  }
+
+  const session = await createSession(walletAddress);
+  const score = randomInt(0, 2001); // 0..2000
+  const snakeLength = randomInt(6, 61); // 6..60, within the render range
+
+  const payload = buildMintPayload({
+    wallet: walletAddress,
+    sessionId: session.id,
+    score,
+    snakeLength,
+    finalSnakeCells: [],
+    random: true,
+    revealBlock: await pickRevealBlock()
+  });
+  const signature = await signMintPayload(payload);
+
+  const updatedSession = await updateSession(session.id, {
+    status: "COMPLETED",
+    endedAt: new Date().toISOString(),
+    score,
+    snakeLength,
+    snakeDataHash: payload.snakeDataHash,
+    revealBlock: payload.revealBlock,
+    random: true,
+    mintPayloadHash: payload.payloadHash,
+    mintSignature: signature
   });
 
   return {
@@ -274,6 +344,35 @@ export async function saveReplay({ wallet, sessionId, replayURI }) {
   }
 
   return updateSession(sessionId, { replayGifUrl: replayURI });
+}
+
+// Public replay read — the replay lives in the backend store (finalSnakeCells +
+// moves are persisted when the run is locked), so the "store on the backend"
+// option simply serves it here by session id. No IPFS for now.
+export async function getReplayBySession(sessionId) {
+  const session = await findSessionById(sessionId);
+
+  if (!session) {
+    throw notFound("Replay not found");
+  }
+
+  if (!["COMPLETED", "MINTED"].includes(session.status)) {
+    throw notFound("Replay is not available for this session");
+  }
+
+  if (session.random) {
+    throw notFound("Random-score mints have no replay");
+  }
+
+  return {
+    sessionId: session.id,
+    wallet: session.walletAddress,
+    score: session.score,
+    snakeLength: session.snakeLength,
+    finalSnakeCells: parseJsonField(session.finalSnakeCells, []),
+    moves: parseJsonField(session.moves, []),
+    endedAt: session.endedAt || session.updatedAt
+  };
 }
 
 function validateGameResult({ startedAt, score, snakeLength, finalSnakeCells, moves }) {

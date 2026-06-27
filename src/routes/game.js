@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import {
   completeGame,
+  generateRandomResult,
   getGameStatus,
   getLockedResult,
   getLockedResults,
@@ -95,6 +96,30 @@ router.post(
   })
 );
 
+router.post(
+  "/random",
+  asyncHandler(async (req, res) => {
+    const input = startSchema.parse(req.body); // { wallet }
+    const result = await generateRandomResult(input.wallet);
+    const session = serializeSessionResult(result.session);
+
+    res.status(201).json({
+      locked: true,
+      random: true,
+      session: {
+        id: session.id,
+        walletAddress: session.walletAddress,
+        status: session.status,
+        score: session.score,
+        snakeLength: session.snakeLength,
+        random: true,
+        endedAt: session.endedAt
+      },
+      mint: result.mint
+    });
+  })
+);
+
 router.get(
   "/results/:wallet",
   asyncHandler(async (req, res) => {
@@ -147,6 +172,9 @@ function serializeResultResponse(session, walletAddress = session.walletAddress)
     replayGifUrl: session.replayGifUrl,
     mintPayloadHash: session.mintPayloadHash,
     mintSignature: session.mintSignature,
+    snakeDataHash: session.snakeDataHash,
+    revealBlock: session.revealBlock,
+    random: Boolean(session.random),
     mintedTokenId: session.mintedTokenId,
     txHash: session.txHash
   };
