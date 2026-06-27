@@ -10,7 +10,6 @@ import {
   clearAllowlist,
   clearInviteCodes,
   createInviteCodes,
-  expirePendingSessions,
   getSettings,
   listAllowlist,
   listInviteCodes,
@@ -18,6 +17,7 @@ import {
   redeemInviteCode,
   updateSettings
 } from "../services/store.js";
+import { abandonStuckSessions } from "../services/gameService.js";
 
 const router = Router();
 
@@ -191,9 +191,8 @@ router.post(
     const wallet = normalizeWallet(input.wallet);
     assertAdminSignature(wallet, input.signature);
 
-    const targetWallet = normalizeWallet(input.targetWallet);
-    const expired = await expirePendingSessions(targetWallet);
-    res.json({ wallet: targetWallet, expired });
+    const result = await abandonStuckSessions(input.targetWallet);
+    res.json(result);
   })
 );
 

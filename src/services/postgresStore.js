@@ -249,14 +249,16 @@ export async function findSessionById(id) {
 // COMPLETED) so the "one pending run per wallet" rule lets it play again — e.g.
 // after a game-signer change or an expired commit-reveal block leaves a run
 // unmintable. Returns how many sessions were expired.
-export async function expirePendingSessions(walletAddress) {
+export async function expirePendingSessions(walletAddress, { maxRevealBlock } = {}) {
   const result = await getPool().query(
     `UPDATE game_sessions
      SET status = 'EXPIRED', updated_at = $2
      WHERE wallet_address = $1
-       AND status IN ('ACTIVE', 'COMPLETED')
-       AND minted_token_id IS NULL`,
-    [walletAddress, now()],
+       AND status = 'COMPLETED'
+       AND minted_token_id IS NULL
+       AND reveal_block IS NOT NULL
+       AND ($3::bigint IS NULL OR reveal_block <= $3)`,
+    [walletAddress, now(), maxRevealBlock ?? null],
   );
   return result.rowCount;
 }

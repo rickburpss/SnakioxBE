@@ -1,6 +1,6 @@
 import { randomInt } from "node:crypto";
 import { env } from "../config/env.js";
-import { pickRevealBlock } from "./chainService.js";
+import { getCurrentBlockNumber, pickRevealBlock } from "./chainService.js";
 import {
   buildMintPayload,
   normalizeWallet,
@@ -9,6 +9,7 @@ import {
 import {
   createMintRecord,
   createSession,
+  expirePendingSessions,
   findInviteByWallet,
   findSessionById,
   findSessionsByWallet,
@@ -21,6 +22,24 @@ import {
 import { badRequest, conflict, forbidden, notFound } from "../utils/errors.js";
 
 const maxMintsPerWallet = 3;
+// blockhash() only resolves the last 256 blocks, so a run whose reveal block is
+// older than that can never mint — that's the only "genuinely stuck" case.
+const REVEAL_WINDOW_BLOCKS = 256;
+
+// Admin maintenance: expire a wallet's stuck run so it can play again. Only runs
+// whose commit-reveal window has fully passed are expirable — a still-mintable
+// run can't be abandoned, so players can't lie to re-roll a bad score.
+export async function abandonStuckSessions(wallet) {
+  const walletAddress = normalizeWallet(wallet);
+  const currentBlock = await getCurrentBlockNumber();
+  if (currentBlock == null) {
+    throw badRequest("Cannot verify reveal status — RPC_URL is not configured");
+  }
+  const expired = await expirePendingSessions(walletAddress, {
+    maxRevealBlock: currentBlock - REVEAL_WINDOW_BLOCKS,
+  });
+  return { wallet: walletAddress, expired };
+}
 
 export async function getGameStatus(wallet) {
   const walletAddress = normalizeWallet(wallet);

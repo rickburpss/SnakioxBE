@@ -28,3 +28,12 @@ export async function pickRevealBlock() {
   const current = await p.getBlockNumber();
   return current + env.revealBufferBlocks;
 }
+
+// Current chain height, or null if no RPC is configured. Used to tell whether a
+// run's commit-reveal window has expired (so a still-mintable run can't be
+// abandoned).
+export async function getCurrentBlockNumber() {
+  const p = getProvider();
+  if (!p) return null;
+  return p.getBlockNumber();
+}
