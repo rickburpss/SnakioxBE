@@ -10,6 +10,7 @@ import {
   clearAllowlist,
   clearInviteCodes,
   createInviteCodes,
+  expirePendingSessions,
   getSettings,
   listAllowlist,
   listInviteCodes,
@@ -178,6 +179,21 @@ router.post(
 
     await clearAllowlist();
     res.json({ entries: [] });
+  })
+);
+
+// Expire a wallet's locked-but-unminted run so it can play again (e.g. after a
+// game-signer change or an expired commit-reveal block left it unmintable).
+router.post(
+  "/admin/session/abandon",
+  asyncHandler(async (req, res) => {
+    const input = allowlistRemoveSchema.parse(req.body);
+    const wallet = normalizeWallet(input.wallet);
+    assertAdminSignature(wallet, input.signature);
+
+    const targetWallet = normalizeWallet(input.targetWallet);
+    const expired = await expirePendingSessions(targetWallet);
+    res.json({ wallet: targetWallet, expired });
   })
 );
 

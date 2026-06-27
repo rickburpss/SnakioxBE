@@ -214,6 +214,28 @@ export async function findSessionById(id) {
   return state.sessions.find((session) => session.id === id) || null;
 }
 
+// Admin maintenance: expire a wallet's locked-but-unminted runs (ACTIVE or
+// COMPLETED) so the "one pending run per wallet" rule lets it play again — e.g.
+// after a game-signer change or an expired commit-reveal block leaves a run
+// unmintable. Returns how many sessions were expired.
+export async function expirePendingSessions(walletAddress) {
+  return updateState((state) => {
+    let expired = 0;
+    for (const session of state.sessions) {
+      if (
+        session.walletAddress === walletAddress &&
+        ["ACTIVE", "COMPLETED"].includes(session.status) &&
+        !session.mintedTokenId
+      ) {
+        session.status = "EXPIRED";
+        session.updatedAt = now();
+        expired += 1;
+      }
+    }
+    return expired;
+  });
+}
+
 export async function prepareGameStart(walletAddress, { maxMintsPerWallet }) {
   return updateState((state) => {
     const inviteRequired = state.settings?.inviteRequired ?? true;

@@ -245,6 +245,22 @@ export async function findSessionById(id) {
   return result.rows[0] ? mapSession(result.rows[0]) : null;
 }
 
+// Admin maintenance: expire a wallet's locked-but-unminted runs (ACTIVE or
+// COMPLETED) so the "one pending run per wallet" rule lets it play again — e.g.
+// after a game-signer change or an expired commit-reveal block leaves a run
+// unmintable. Returns how many sessions were expired.
+export async function expirePendingSessions(walletAddress) {
+  const result = await getPool().query(
+    `UPDATE game_sessions
+     SET status = 'EXPIRED', updated_at = $2
+     WHERE wallet_address = $1
+       AND status IN ('ACTIVE', 'COMPLETED')
+       AND minted_token_id IS NULL`,
+    [walletAddress, now()],
+  );
+  return result.rowCount;
+}
+
 // Single round-trip start. The partial unique index
 // game_sessions_one_pending_per_wallet_idx guarantees at most one
 // ACTIVE/COMPLETED session per wallet, so eligibility and the insert can run in
