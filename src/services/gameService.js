@@ -14,14 +14,20 @@ import {
   findSessionById,
   findSessionsByWallet,
   findUser,
+  flagBotWallet,
   getSettings,
   isWalletAllowlisted,
+  isWalletFlaggedBot,
   prepareGameStart,
   updateSession,
 } from "./store.js";
 import { badRequest, conflict, forbidden, notFound } from "../utils/errors.js";
 
 const maxMintsPerWallet = 3;
+// Client scoring: the snake starts at 3 cells and each food adds 1 cell + 10
+// points, so score and length always move together (score = (len - 3) * 10).
+const START_SNAKE_LENGTH = 3;
+const POINTS_PER_FOOD = 10;
 // blockhash() only resolves the last 256 blocks, so a run whose reveal block is
 // older than that can never mint — that's the only "genuinely stuck" case.
 const REVEAL_WINDOW_BLOCKS = 256;
@@ -58,6 +64,7 @@ export async function getGameStatus(wallet) {
   const sessions = await findSessionsByWallet(walletAddress);
   const invite = await findInviteByWallet(walletAddress);
   const isAllowlisted = await isWalletAllowlisted(walletAddress);
+  const flaggedAsBot = await isWalletFlaggedBot(walletAddress);
   const settings = await getSettings();
   const latestSession = sessions[0] || null;
   const mintedCount = sessions.filter(
@@ -69,6 +76,7 @@ export async function getGameStatus(wallet) {
     isAllowlisted || !settings.inviteRequired || Boolean(invite);
   const remainingMints = Math.max(maxMintsPerWallet - mintedCount, 0);
   const canPlay =
+    !flaggedAsBot &&
     hasInviteAccess &&
     remainingMints > 0 &&
     !hasCompletedGame &&
@@ -78,6 +86,7 @@ export async function getGameStatus(wallet) {
     registered: true,
     inviteRequired: settings.inviteRequired,
     isAllowlisted,
+    flaggedAsBot,
     hasInvite: Boolean(invite),
     inviteCode: invite?.code || null,
     canPlay,
@@ -91,6 +100,7 @@ export async function getGameStatus(wallet) {
     reason: canPlay
       ? null
       : getBlockedReason({
+          flaggedAsBot,
           hasInviteAccess,
           remainingMints,
           latestSession,
@@ -102,6 +112,11 @@ export async function getGameStatus(wallet) {
 
 export async function startGame(wallet) {
   const walletAddress = normalizeWallet(wallet);
+
+  if (await isWalletFlaggedBot(walletAddress)) {
+    throw forbidden("Wallet is flagged for suspicious activity");
+  }
+
   const result = await prepareGameStart(walletAddress, { maxMintsPerWallet });
 
   if (!result.userExists) {
@@ -143,13 +158,22 @@ export async function completeGame(input) {
     throw conflict("Game session has already been completed");
   }
 
-  validateGameResult({
-    startedAt: new Date(session.startedAt),
-    score: input.score,
-    snakeLength: input.snakeLength,
-    finalSnakeCells: input.finalSnakeCells,
-    moves: input.moves,
-  });
+  try {
+    validateGameResult({
+      startedAt: new Date(session.startedAt),
+      score: input.score,
+      snakeLength: input.snakeLength,
+      finalSnakeCells: input.finalSnakeCells,
+      moves: input.moves,
+    });
+  } catch (error) {
+    // Persist a bot flag so the wallet is blocked until an admin reviews/removes
+    // it. The completion still fails (the run is rejected).
+    if (error.botDetected) {
+      await flagBotWallet({ walletAddress, reason: error.message });
+    }
+    throw error;
+  }
 
   const payload = buildMintPayload({
     wallet: walletAddress,
@@ -197,6 +221,10 @@ export async function generateRandomResult(wallet) {
     throw forbidden("Wallet must be registered before minting");
   }
 
+  if (await isWalletFlaggedBot(walletAddress)) {
+    throw forbidden("Wallet is flagged for suspicious activity");
+  }
+
   const invite = await findInviteByWallet(walletAddress);
   const isAllowlisted = await isWalletAllowlisted(walletAddress);
   const settings = await getSettings();
@@ -218,8 +246,13 @@ export async function generateRandomResult(wallet) {
   }
 
   const session = await createSession(walletAddress);
-  const score = randomInt(0, 2001); // 0..2000
+  // In real play each food grows the snake by 1 AND adds 10 points, so score is
+  // always (length - startLength) * 10. Derive it the same way here instead of
+  // rolling an independent score, so a random mint can't show e.g. 2000 pts on a
+  // length-6 snake. Only the score number is affected — length (and therefore
+  // the rendered snake + its rarity seed) is unchanged.
   const snakeLength = randomInt(6, 61); // 6..60, within the render range
+  const score = (snakeLength - START_SNAKE_LENGTH) * POINTS_PER_FOOD;
 
   const payload = buildMintPayload({
     wallet: walletAddress,
@@ -490,16 +523,20 @@ function validateGameResult({
 }
 
 function throwBotDetected() {
-  throw badRequest("Bot activities detected");
+  const error = badRequest("Bot activities detected");
+  error.botDetected = true;
+  throw error;
 }
 
 function getBlockedReason({
+  flaggedAsBot,
   hasInviteAccess,
   remainingMints,
   latestSession,
   hasActiveGame,
   hasCompletedGame,
 }) {
+  if (flaggedAsBot) return "Wallet flagged for suspicious activity";
   if (!hasInviteAccess) return "Wallet needs an invite code";
   if (remainingMints <= 0) return "Wallet mint limit reached";
   if (hasActiveGame) return "Game session is already active";

@@ -179,6 +179,43 @@ export async function isWalletAllowlisted(walletAddress) {
   return result.rows[0].exists;
 }
 
+export async function flagBotWallet({ walletAddress, reason }) {
+  const result = await getPool().query(
+    `INSERT INTO bot_flags (id, wallet_address, reason, flag_count, flagged_at)
+     VALUES ($1, $2, $3, 1, $4)
+     ON CONFLICT (wallet_address)
+     DO UPDATE SET flag_count = bot_flags.flag_count + 1,
+                   reason = EXCLUDED.reason,
+                   flagged_at = EXCLUDED.flagged_at
+     RETURNING *`,
+    [randomUUID(), walletAddress, reason ?? null, now()],
+  );
+  return mapBotFlag(result.rows[0]);
+}
+
+export async function listBotFlags() {
+  const result = await getPool().query(
+    "SELECT * FROM bot_flags ORDER BY flagged_at DESC",
+  );
+  return result.rows.map(mapBotFlag);
+}
+
+export async function removeBotFlag(walletAddress) {
+  const result = await getPool().query(
+    "DELETE FROM bot_flags WHERE wallet_address = $1",
+    [walletAddress],
+  );
+  return result.rowCount > 0;
+}
+
+export async function isWalletFlaggedBot(walletAddress) {
+  const result = await getPool().query(
+    "SELECT EXISTS (SELECT 1 FROM bot_flags WHERE wallet_address = $1) AS exists",
+    [walletAddress],
+  );
+  return result.rows[0].exists;
+}
+
 export async function getSettings() {
   const result = await getPool().query(
     "SELECT invite_required FROM app_settings WHERE id = 1",
@@ -567,6 +604,16 @@ function mapAllowlist(row) {
     walletAddress: row.wallet_address,
     addedBy: row.added_by,
     addedAt: toIso(row.added_at),
+  };
+}
+
+function mapBotFlag(row) {
+  return {
+    id: row.id,
+    walletAddress: row.wallet_address,
+    reason: row.reason,
+    flagCount: row.flag_count,
+    flaggedAt: toIso(row.flagged_at),
   };
 }
 

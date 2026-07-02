@@ -12,6 +12,7 @@ const emptyState = {
   mintRecords: [],
   inviteCodes: [],
   allowlist: [],
+  botFlags: [],
   settings: {
     inviteRequired: true,
   },
@@ -172,6 +173,49 @@ export async function clearAllowlist() {
 export async function isWalletAllowlisted(walletAddress) {
   const state = await readState();
   return state.allowlist.some((entry) => entry.walletAddress === walletAddress);
+}
+
+export async function flagBotWallet({ walletAddress, reason }) {
+  return updateState((state) => {
+    let entry = state.botFlags.find((item) => item.walletAddress === walletAddress);
+    if (entry) {
+      entry.flagCount += 1;
+      entry.reason = reason ?? entry.reason;
+      entry.flaggedAt = now();
+    } else {
+      entry = {
+        id: randomUUID(),
+        walletAddress,
+        reason: reason ?? null,
+        flagCount: 1,
+        flaggedAt: now(),
+      };
+      state.botFlags.push(entry);
+    }
+    return entry;
+  });
+}
+
+export async function listBotFlags() {
+  const state = await readState();
+  return state.botFlags
+    .slice()
+    .sort((a, b) => new Date(b.flaggedAt) - new Date(a.flaggedAt));
+}
+
+export async function removeBotFlag(walletAddress) {
+  return updateState((state) => {
+    const before = state.botFlags.length;
+    state.botFlags = state.botFlags.filter(
+      (item) => item.walletAddress !== walletAddress,
+    );
+    return before !== state.botFlags.length;
+  });
+}
+
+export async function isWalletFlaggedBot(walletAddress) {
+  const state = await readState();
+  return state.botFlags.some((item) => item.walletAddress === walletAddress);
 }
 
 export async function getSettings() {
@@ -455,6 +499,7 @@ function normalizeState(state) {
     ...state,
     inviteCodes: Array.isArray(state.inviteCodes) ? state.inviteCodes : [],
     allowlist: Array.isArray(state.allowlist) ? state.allowlist : [],
+    botFlags: Array.isArray(state.botFlags) ? state.botFlags : [],
     settings: {
       ...emptyState.settings,
       ...(state.settings || {}),

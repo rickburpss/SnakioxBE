@@ -12,8 +12,10 @@ import {
   createInviteCodes,
   getSettings,
   listAllowlist,
+  listBotFlags,
   listInviteCodes,
   removeAllowlistWallet,
+  removeBotFlag,
   redeemInviteCode,
   updateSettings
 } from "../services/store.js";
@@ -179,6 +181,32 @@ router.post(
 
     await clearAllowlist();
     res.json({ entries: [] });
+  })
+);
+
+router.post(
+  "/admin/bot/list",
+  asyncHandler(async (req, res) => {
+    const input = adminAuthSchema.parse(req.body);
+    const wallet = normalizeWallet(input.wallet);
+    assertAdminSignature(wallet, input.signature);
+
+    const flags = await listBotFlags();
+    res.json({ flags });
+  })
+);
+
+// Remove a wallet's bot flag — un-blocks it so it can play again.
+router.post(
+  "/admin/bot/remove",
+  asyncHandler(async (req, res) => {
+    const input = allowlistRemoveSchema.parse(req.body);
+    const wallet = normalizeWallet(input.wallet);
+    assertAdminSignature(wallet, input.signature);
+
+    const targetWallet = normalizeWallet(input.targetWallet);
+    const removed = await removeBotFlag(targetWallet);
+    res.json({ removed, walletAddress: targetWallet });
   })
 );
 

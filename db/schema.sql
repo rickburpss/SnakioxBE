@@ -33,6 +33,14 @@ CREATE TABLE IF NOT EXISTS allowlist (
   added_at TIMESTAMPTZ NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS bot_flags (
+  id TEXT PRIMARY KEY,
+  wallet_address TEXT NOT NULL UNIQUE,
+  reason TEXT,
+  flag_count INTEGER NOT NULL DEFAULT 1,
+  flagged_at TIMESTAMPTZ NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS app_settings (
   id SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
   invite_required BOOLEAN NOT NULL DEFAULT TRUE,
